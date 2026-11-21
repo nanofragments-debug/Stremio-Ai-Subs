@@ -17,6 +17,8 @@ const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
 const CACHE_DIR = path.join(__dirname, 'cache');
 if (!fs.existsSync(CACHE_DIR)) fs.mkdirSync(CACHE_DIR);
 
+const inProgress = {};
+
 const LANG_CODES = {
     "Albanian": "sqi", "Arabic": "ara", "Bosnian": "bos", "Bulgarian": "bul",
     "Chinese (Simplified)": "zho", "Chinese (Traditional)": "zho", "Croatian": "hrv",
@@ -33,9 +35,9 @@ const LANG_CODES = {
 
 const manifest = {
     id: 'com.global.aisubs.pro',
-    version: '1.0.2',
+    version: '1.0.3',
     name: 'Global AI Subtitles Pro',
-    description: 'Instant AI-translated subtitles in 40+ languages for Stremio.',
+    description: 'Instant AI-translated subtitles in 41 languages for Stremio.',
     resources: ['subtitles'],
     types: ['movie', 'series'],
     idPrefixes: ['tt'],
@@ -79,11 +81,47 @@ ${srtText}`;
     return response.text.replace(/```srt|```/g, '').trim();
 }
 
+async function generateSubtitleFile(type, id, targetLang, cacheFile) {
+    const jobKey = `${id}_${targetLang}`;
+    if (inProgress[jobKey]) return inProgress[jobKey];
+
+    inProgress[jobKey] = (async () => {
+        try {
+            console.log(`Starting subtitle job: ${jobKey}`);
+            const engSrt = await fetchEnglishSrt(type, id);
+            if (!engSrt) {
+                console.log(`No English subtitle found for ${id}`);
+                return false;
+            }
+
+            if (targetLang === 'English') {
+                fs.writeFileSync(cacheFile, engSrt, 'utf8');
+            } else {
+                const translated = await translateSrt(engSrt, targetLang);
+                fs.writeFileSync(cacheFile, translated, 'utf8');
+            }
+            console.log(`Completed subtitle job: ${jobKey}`);
+            return true;
+        } catch (err) {
+            console.error(`Translation failed for ${jobKey}:`, err.message);
+            return false;
+        } finally {
+            delete inProgress[jobKey];
+        }
+    })();
+
+    return inProgress[jobKey];
+}
+
+// 1. Reply to Stremio IMMEDIATELY (0.1s) so it never times out
 builder.defineSubtitlesHandler(async ({ type, id, config }) => {
     const userKey = (config?.key || '').trim();
     const targetLang = config?.lang || 'Macedonian';
 
+    console.log(`Stremio requested subtitles for ${type} ${id} | Lang: ${targetLang}`);
+
     if (!VALID_KEYS.includes(userKey)) {
+        console.log(`Invalid key rejected: ${userKey}`);
         return { subtitles: [] };
     }
 
@@ -91,31 +129,19 @@ builder.defineSubtitlesHandler(async ({ type, id, config }) => {
     const safeLang = targetLang.replace(/[^a-zA-Z0-9_-]/g, '_');
     const cacheFile = path.join(CACHE_DIR, `${safeId}_${safeLang}.srt`);
 
+    // Start translating in the background right away
     if (!fs.existsSync(cacheFile)) {
-        const engSrt = await fetchEnglishSrt(type, id);
-        if (!engSrt) return { subtitles: [] };
-
-        if (targetLang === 'English') {
-            fs.writeFileSync(cacheFile, engSrt, 'utf8');
-        } else {
-            try {
-                const translated = await translateSrt(engSrt, targetLang);
-                fs.writeFileSync(cacheFile, translated, 'utf8');
-            } catch (err) {
-                console.error('AI Translation failed:', err.message);
-                return { subtitles: [] };
-            }
-        }
+        generateSubtitleFile(type, id, targetLang, cacheFile);
     }
 
-    const host = process.env.PUBLIC_URL || `http://localhost:${PORT}`;
+    const host = (process.env.PUBLIC_URL || `http://localhost:${PORT}`).replace(/\/$/, '');
     const isoCode = LANG_CODES[targetLang] || targetLang.slice(0, 3).toLowerCase();
 
     return {
         subtitles: [
             {
                 id: `ai-${safeLang}-${safeId}`,
-                url: `${host}/subs/${safeId}_${safeLang}.srt`,
+                url: `${host}/subs/${type}/${id}/${encodeURIComponent(targetLang)}.srt`,
                 lang: isoCode,
                 title: `AI Subtitles Pro (${targetLang})`
             }
@@ -123,7 +149,24 @@ builder.defineSubtitlesHandler(async ({ type, id, config }) => {
     };
 });
 
-app.use('/subs', express.static(CACHE_DIR));
+// 2. When Stremio downloads the SRT, wait for translation to finish if needed
+app.get('/subs/:type/:id/:langFile', async (req, res) => {
+    const { type, id, langFile } = req.params;
+    const targetLang = decodeURIComponent(langFile.replace(/\.srt$/, ''));
+    const safeId = id.replace(/[^a-zA-Z0-9_-]/g, '_');
+    const safeLang = targetLang.replace(/[^a-zA-Z0-9_-]/g, '_');
+    const cacheFile = path.join(CACHE_DIR, `${safeId}_${safeLang}.srt`);
+
+    if (!fs.existsSync(cacheFile)) {
+        const ok = await generateSubtitleFile(type, id, targetLang, cacheFile);
+        if (!ok || !fs.existsSync(cacheFile)) {
+            return res.status(404).send('Subtitle unavailable');
+        }
+    }
+
+    res.setHeader('Content-Type', 'application/x-subrip; charset=utf-8');
+    res.sendFile(cacheFile);
+});
 
 app.get('/configure', (req, res) => {
     const languages = Object.keys(LANG_CODES);
