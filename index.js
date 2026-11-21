@@ -26,6 +26,10 @@ const manifest = {
     types: ['movie', 'series'],
     idPrefixes: ['tt'],
     catalogs: [],
+    config: [
+        { key: 'lang', type: 'text', title: 'Language' },
+        { key: 'key', type: 'text', title: 'Access Key' }
+    ],
     behaviorHints: { configurable: true, configurationRequired: true }
 };
 
