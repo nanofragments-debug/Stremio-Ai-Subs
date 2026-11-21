@@ -17,19 +17,29 @@ const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
 const CACHE_DIR = path.join(__dirname, 'cache');
 if (!fs.existsSync(CACHE_DIR)) fs.mkdirSync(CACHE_DIR);
 
+const LANG_CODES = {
+    "Albanian": "sqi", "Arabic": "ara", "Bosnian": "bos", "Bulgarian": "bul",
+    "Chinese (Simplified)": "zho", "Chinese (Traditional)": "zho", "Croatian": "hrv",
+    "Czech": "ces", "Danish": "dan", "Dutch": "nld", "English": "eng",
+    "Estonian": "est", "Finnish": "fin", "French": "fra", "German": "deu",
+    "Greek": "ell", "Hebrew": "heb", "Hindi": "hin", "Hungarian": "hun",
+    "Indonesian": "ind", "Italian": "ita", "Japanese": "jpn", "Korean": "kor",
+    "Latvian": "lav", "Lithuanian": "lit", "Macedonian": "mkd", "Malay": "msa",
+    "Norwegian": "nor", "Polish": "pol", "Portuguese": "por", "Romanian": "ron",
+    "Russian": "rus", "Serbian": "srp", "Slovak": "slk", "Slovenian": "slv",
+    "Spanish": "spa", "Swedish": "swe", "Thai": "tha", "Turkish": "tur",
+    "Ukrainian": "ukr", "Vietnamese": "vie"
+};
+
 const manifest = {
     id: 'com.global.aisubs.pro',
-    version: '1.0.0',
+    version: '1.0.2',
     name: 'Global AI Subtitles Pro',
-    description: 'Instant AI-translated subtitles in 40 languages for Stremio.',
+    description: 'Instant AI-translated subtitles in 40+ languages for Stremio.',
     resources: ['subtitles'],
     types: ['movie', 'series'],
     idPrefixes: ['tt'],
     catalogs: [],
-    config: [
-        { key: 'lang', type: 'text', title: 'Language' },
-        { key: 'key', type: 'text', title: 'Access Key' }
-    ],
     behaviorHints: { configurable: true, configurationRequired: true }
 };
 
@@ -85,22 +95,29 @@ builder.defineSubtitlesHandler(async ({ type, id, config }) => {
         const engSrt = await fetchEnglishSrt(type, id);
         if (!engSrt) return { subtitles: [] };
 
-        try {
-            const translated = await translateSrt(engSrt, targetLang);
-            fs.writeFileSync(cacheFile, translated, 'utf8');
-        } catch (err) {
-            console.error('AI Translation failed:', err.message);
-            return { subtitles: [] };
+        if (targetLang === 'English') {
+            fs.writeFileSync(cacheFile, engSrt, 'utf8');
+        } else {
+            try {
+                const translated = await translateSrt(engSrt, targetLang);
+                fs.writeFileSync(cacheFile, translated, 'utf8');
+            } catch (err) {
+                console.error('AI Translation failed:', err.message);
+                return { subtitles: [] };
+            }
         }
     }
 
     const host = process.env.PUBLIC_URL || `http://localhost:${PORT}`;
+    const isoCode = LANG_CODES[targetLang] || targetLang.slice(0, 3).toLowerCase();
+
     return {
         subtitles: [
             {
                 id: `ai-${safeLang}-${safeId}`,
                 url: `${host}/subs/${safeId}_${safeLang}.srt`,
-                lang: targetLang.slice(0, 3).toLowerCase()
+                lang: isoCode,
+                title: `AI Subtitles Pro (${targetLang})`
             }
         ]
     };
@@ -109,17 +126,7 @@ builder.defineSubtitlesHandler(async ({ type, id, config }) => {
 app.use('/subs', express.static(CACHE_DIR));
 
 app.get('/configure', (req, res) => {
-    const languages = [
-        "Albanian", "Arabic", "Bosnian", "Bulgarian", "Chinese (Simplified)",
-        "Chinese (Traditional)", "Croatian", "Czech", "Danish", "Dutch",
-        "Estonian", "Finnish", "French", "German", "Greek", "Hebrew",
-        "Hindi", "Hungarian", "Indonesian", "Italian", "Japanese", "Korean",
-        "Latvian", "Lithuanian", "Macedonian", "Malay", "Norwegian",
-        "Polish", "Portuguese", "Romanian", "Russian", "Serbian",
-        "Slovak", "Slovenian", "Spanish", "Swedish", "Thai", "Turkish",
-        "Ukrainian", "Vietnamese"
-    ];
-
+    const languages = Object.keys(LANG_CODES);
     const optionsHtml = languages.map(l => `<option value="${l}">${l}</option>`).join('');
 
     res.send(`
@@ -141,7 +148,7 @@ app.get('/configure', (req, res) => {
     <body>
         <div class="box">
             <h2>Global AI Subtitles Pro</h2>
-            <p style="font-size:14px; color:#ccc;">Instant AI movie & series subtitles in 40 languages.</p>
+            <p style="font-size:14px; color:#ccc;">Instant AI movie & series subtitles in 41 languages.</p>
             <label>Choose Your Language</label>
             <select id="lang">${optionsHtml}</select>
             <label>Access Key</label>
