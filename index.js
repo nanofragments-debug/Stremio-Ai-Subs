@@ -35,14 +35,18 @@ const LANG_CODES = {
 
 const manifest = {
     id: 'com.global.aisubs.pro',
-    version: '1.0.3',
+    version: '1.0.4',
     name: 'Global AI Subtitles Pro',
     description: 'Instant AI-translated subtitles in 41 languages for Stremio.',
     resources: ['subtitles'],
     types: ['movie', 'series'],
     idPrefixes: ['tt'],
     catalogs: [],
-    behaviorHints: { configurable: true, configurationRequired: true }
+    behaviorHints: { configurable: true, configurationRequired: true },
+    config: [
+        { key: 'lang', type: 'text', default: 'Macedonian' },
+        { key: 'key', type: 'text', default: '' }
+    ]
 };
 
 const builder = new addonBuilder(manifest);
@@ -113,7 +117,6 @@ async function generateSubtitleFile(type, id, targetLang, cacheFile) {
     return inProgress[jobKey];
 }
 
-// 1. Reply to Stremio IMMEDIATELY (0.1s) so it never times out
 builder.defineSubtitlesHandler(async ({ type, id, config }) => {
     const userKey = (config?.key || '').trim();
     const targetLang = config?.lang || 'Macedonian';
@@ -129,7 +132,6 @@ builder.defineSubtitlesHandler(async ({ type, id, config }) => {
     const safeLang = targetLang.replace(/[^a-zA-Z0-9_-]/g, '_');
     const cacheFile = path.join(CACHE_DIR, `${safeId}_${safeLang}.srt`);
 
-    // Start translating in the background right away
     if (!fs.existsSync(cacheFile)) {
         generateSubtitleFile(type, id, targetLang, cacheFile);
     }
@@ -149,7 +151,6 @@ builder.defineSubtitlesHandler(async ({ type, id, config }) => {
     };
 });
 
-// 2. When Stremio downloads the SRT, wait for translation to finish if needed
 app.get('/subs/:type/:id/:langFile', async (req, res) => {
     const { type, id, langFile } = req.params;
     const targetLang = decodeURIComponent(langFile.replace(/\.srt$/, ''));
